@@ -73,7 +73,6 @@ def init_data_single(labels):  # 生成单一数据
                 targets[yi, xi, BOX_COUNT*5+ci] = 1.  # 正确类别的真实值是1
             else:  # 不是物体真实类别
                 targets[yi, xi, BOX_COUNT*5+ci] = 0.  # 错误类别应该是0
-    # print(labels_)
     return targets  # , mask
 
 
@@ -85,6 +84,11 @@ def init_data(size: int):
         imgs.append(img)
         targets.append(target)
     return np.array(imgs), np.array(targets)
+
+
+def save_txt(txt, mode='a'):
+    with open('./export/log.log', mode) as f:
+        f.write('%s\n\n' % txt)
 
 
 def y_hat2labels(y_hat):
@@ -116,7 +120,8 @@ def y_hat2labels(y_hat):
 def test(model):
     cell_h = IMG_SHAPE[0] / TAR_SHAPE[0]  # Cell的高度
     cell_w = IMG_SHAPE[1] / TAR_SHAPE[1]  # Cell的宽度
-    image, _ = create()  # 创建验证码，img没有颜色深度，labels见下文
+    image, labels = create()  # 创建验证码，img没有颜色深度，labels见下文
+    y = init_data_single(labels)
     img = np.reshape(image, IMG_SHAPE)
     y_hat = model(tf.convert_to_tensor([img]), training=False)
     y_hat = y_hat[0]
@@ -137,36 +142,57 @@ def test(model):
                             x, y,
                             y_hat[yi, xi, bi*5+2]*cell_w,  # w
                             y_hat[yi, xi, bi*5+3]*cell_h,  # h
-                            np.argmax(y_hat[yi, xi, -CLASS_COUNT:])  # class
+                            np.argmax(y_hat[yi, xi, BOX_COUNT*5:])  # class
                         )
                     )
     image_, title = show(image, labels)
     image_.save(
         '%s/%d_%s.png' % (EXPORT_PATH, int(time.time()*1e7), title), 'png'
     )
-    # print(labels)
-    # plt.imshow(image_)
-    # plt.title(title)
-    # plt.show()
 # @tf.function  # 这个注解控制将方法加入内存以提高运行速度
 
 
 def yolo_loss(y, y_hat):
     tmp = y-y_hat
+    # save_txt('y::\n%s' % y, mode='w')
+    # save_txt('y_hat::\n%s' % y_hat)
     zeros = tf.zeros_like(y_hat, dtype=tf.float32)
     loss = tf.where(tf.math.is_nan(y), x=zeros, y=tmp)
-    print(loss)
-    return tf.math.reduce_sum(loss)
+    # save_txt('loss::\n%s' % loss)
+    return tf.math.reduce_mean(loss)
+# def yolo_accuracy(y, y_hat):
+#     tmp = y-y_hat
+#     shape=y_hat.shape
+#     y_lite,y_lite_hat=[],[]
+#     for index in range(shape[0]):
+#         for yi in range(shape[1]):
+#             for xi in range(shape[2]):
+#                 for bi in range(BOX_COUNT):
+#                     c_y=y[index,yi,xi,bi*5+4]#置信度实际值
+#                     c_hat=y_hat[index,yi,xi,bi*5+4]#置信度预测值
+#                     if c_y>=.5:
+#                         y_lite.append(y[index,yi,xi,bi*5:bi*5+5])
+#                         y_lite_hat.append(y_hat[index,yi,xi,bi*5:bi*5+5])
+#                     elif c_hat>=.5:
+#                         y_lite.append([
+#                             y_hat[index,yi,xi,bi*5:bi*5+0],
+#                             y_hat[index,yi,xi,bi*5:bi*5+1],
+#                             y_hat[index,yi,xi,bi*5:bi*5+2],
+#                             y_hat[index,yi,xi,bi*5:bi*5+3],
+#                             y[index,yi,xi,bi*5+4]
+#                         ])
+#                         y_lite_hat.append(y_hat[index,yi,xi,bi*5:bi*5+5])
+#     tf.math.reduce_mean((y_hat*y)+((1-y_hat)*(1-y)))
+#     # save_txt('y::\n%s' % y, mode='w')
+#     # save_txt('y_hat::\n%s' % y_hat)
+#     zeros = tf.zeros_like(y_hat, dtype=tf.float32)
+#     loss = tf.where(tf.math.is_nan(y), x=zeros, y=tmp)
+#     # save_txt('loss::\n%s' % loss)
+#     return tf.math.reduce_sum(loss)
 
 
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
-    x, y_raw, _ = data_adapter.unpack_x_y_sample_weight(data)  # 把元组拆成单个值
-    # with open('./export/log.log', 'a') as f:
-    #     f.write('%s\n\n@\n\n' % self.trainable_variables)
-    y_h = self(x, training=False)  # 非训练进行一次计算，得到模型当前参数输出
-    # print(y_raw)
-    y = tf.where(tf.math.is_nan(y_raw), x=y_h, y=y_raw)
-    # print(y)
+    x, y, _ = data_adapter.unpack_x_y_sample_weight(data)  # 把元组拆成单个值
     with tf.GradientTape(persistent=True, watch_accessed_variables=False) as tape:
         tape.watch(self.trainable_variables)  # 监控网络参数进行过的运算
         y_hat = self(x, training=True)  # 得出模型输出
@@ -175,12 +201,9 @@ def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
     self.optimizer.apply_gradients(  # 优化网络参数
         zip(grads, self.trainable_variables)  # 打包为元组
     )
-
-    # with open('./export/log.log', 'a') as f:
-    #     f.write('%s\n\n@\n\n' % y_hat)
     # 计算正确率，不算也行，但是早停需要用所以就进行计算
     accuracy = tf.math.reduce_mean((y_hat*y)+((1-y_hat)*(1-y)))
-    return {'loss': loss, 'accuracy': accuracy}
+    return {'loss': loss}  # , 'accuracy': accuracy}
 
 
 class Callback_(Callback):  # 定义回调类
@@ -203,25 +226,21 @@ if not os.path.exists(EXPORT_PATH):
 model = net.network(NETWORK)
 
 model.compile(
-    optimizer=opts.Adam(learning_rate=0.0002),
-    loss=tf.keras.losses.MeanSquaredError(),
-    metrics=['accuracy'],
+    optimizer=opts.Adam(learning_rate=0.0001),
+    loss=yolo_loss,
+    # metrics=['accuracy'],
 )
-# model.compile(
-#     optimizer=opts.Adam(learning_rate=0.0001),
-#     loss=yolo_loss,
-#     metrics=['accuracy'],
-# )
 X, Y = init_data(1000)
+
 model.train_step = functools.partial(
     step, model
 )  # partial负责把model赋给step的self参数
-model.summary()
-test(model)
+# model.summary()
+# test(model)
 model.fit(
     tf.convert_to_tensor(X, dtype='float32'),
     tf.convert_to_tensor(Y, dtype='float32'),
-    epochs=100,
+    batch_size=100,
     callbacks=[Callback_(model)]
 )
 
