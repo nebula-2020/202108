@@ -47,20 +47,22 @@ def create(
         其中五元组为(left,top,width,height,num)，坐标以像素为单位。
     """
     img = np.zeros(SIZE, dtype='uint8')
-    # img = np.uint8(np.uint8((np.random.randn(*SIZE)+2)*255)*0.75)  # 新建噪声
+    if random.randint(0, 2) == 0:
+        img = np.uint8(np.uint8((np.random.randn(*SIZE)+2)*255)*0.75)  # 新建噪声
     img = Image.fromarray(img)  # 对象类型转换
     draw = ImageDraw.Draw(img)  # 得到绘图对象
-    # for _ in range(LINE_COUNT):  # 绘制斑点
-    #     y, x = randint(0, SIZE[0]), randint(0, SIZE[1])  # 随机化斑点位置
-    #     r = randint(1, LINE_LEN)  # 随机斑点半径
-    #     draw.line(
-    #         (
-    #             x-randint(-r, r),  y-randint(-r, r),  # 起始坐标
-    #             x+randint(-r, r),   y+randint(-r, r)  # 终止坐标
-    #         ),  # 必须打包为元组
-    #         '#ffffff',  # 颜色值，因为是灰度图像，所以除了黑白灰之外的颜色都只能转换成黑白灰
-    #         randint(1, LINE_WIDTH)  # 随机宽度最小为1
-    #     )  # 画出斑点
+    if random.randint(0, 2) == 0:
+        for _ in range(LINE_COUNT):  # 绘制斑点
+            y, x = randint(0, SIZE[0]), randint(0, SIZE[1])  # 随机化斑点位置
+            r = randint(1, LINE_LEN)  # 随机斑点半径
+            draw.line(
+                (
+                    x-randint(-r, r),  y-randint(-r, r),  # 起始坐标
+                    x+randint(-r, r),   y+randint(-r, r)  # 终止坐标
+                ),  # 必须打包为元组
+                '#ffffff',  # 颜色值，因为是灰度图像，所以除了黑白灰之外的颜色都只能转换成黑白灰
+                randint(1, LINE_WIDTH)  # 随机宽度最小为1
+            )  # 画出斑点
     txt = [randint(0, 10) for _ in range(WORD_COUNT)]  # 随机化10个数字
     labels = []  # 样本标签初始化
 

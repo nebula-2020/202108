@@ -1,5 +1,6 @@
 #!~/.conda/envs python
 # -*- coding: utf-8 -*-
+from core.yolo_structure import yolo_network
 from core.utils.captchagenerator import create, show
 import tensorflow as tf
 import functools  # 来源Python标准库的包，用于处理函数和可调用对象的工具
@@ -14,6 +15,7 @@ import PIL.Image as Image
 from tensorflow.python.keras.engine import data_adapter
 import matplotlib.pyplot as plt
 import time
+from tensorflow.python.keras.callbacks import Callback  # 每轮拟合都调用一次的回调函数类的基类
 import os
 tf.config.experimental_run_functions_eagerly(True)
 np.set_printoptions(suppress=True, threshold=np.inf)  # 设置不用科学计数法
@@ -22,98 +24,8 @@ BOX_COUNT = 3
 CLASS_COUNT = 10
 IMG_SHAPE = (56, 112, 1)
 TAR_SHAPE = (4, 8, BOX_COUNT*5+CLASS_COUNT)
-
-
-NETWORK = [
-    layers.Input(shape=IMG_SHAPE, name="input"),
-    layers.Conv2D(
-        filters=64, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-1'
-    ),
-    layers.MaxPool2D(),
-    net.RepeatConv2D(
-        arg_lists=[
-            {
-                'filters': 64, 'kernel_size': (1, 1), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-2-1a-%d'
-            },
-            {
-                'filters': 128, 'kernel_size': (3, 3), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-2-1b-%d'
-            }
-        ],
-        repeat=1
-    ),
-    layers.Conv2D(
-        filters=128, kernel_size=(1, 1), padding='same',
-        activation=tf.nn.relu, name='Conv-2-2'
-    ),
-    layers.Conv2D(
-        filters=256, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-2-3'
-    ),
-    layers.MaxPool2D(),
-
-
-    net.RepeatConv2D(
-        arg_lists=[
-            {
-                'filters': 128, 'kernel_size': (1, 1), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-3-1a-%d'
-            },
-            {
-                'filters': 256, 'kernel_size': (3, 3), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-3-1b-%d'
-            }
-        ],
-        repeat=4
-    ),
-    layers.Conv2D(
-        filters=256, kernel_size=(1, 1), padding='same',
-        activation=tf.nn.relu, name='Conv-3-2'
-    ),
-    layers.Conv2D(
-        filters=512, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-3-3'
-    ),
-    layers.MaxPool2D(),
-
-
-    net.RepeatConv2D(
-        arg_lists=[
-            {
-                'filters': 256, 'kernel_size': (1, 1), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-4-1a-%d'
-            },
-            {
-                'filters': 512, 'kernel_size': (3, 3), 'padding': 'same',
-                'activation': tf.nn.relu, 'name': 'Conv-4-1b-%d'
-            }
-        ],
-        repeat=2
-    ),
-    layers.Conv2D(
-        filters=512, kernel_size=(1, 1), padding='same',
-        activation=tf.nn.relu, name='Conv-4-2'
-    ),
-    layers.Conv2D(
-        filters=1024, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-4-3'
-    ),
-    layers.MaxPool2D(),
-
-    layers.Conv2D(
-        filters=1024, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-5-1'
-    ),
-    layers.Conv2D(
-        filters=1024, kernel_size=(3, 3), padding='same',
-        activation=tf.nn.relu, name='Conv-5-2'
-    ),
-    layers.Flatten(),
-    layers.Dense(units=800, activation=tf.nn.relu),
-    layers.Reshape(target_shape=TAR_SHAPE),
-]
+EXPORT_PATH = './export/imgs'
+NETWORK = yolo_network(IMG_SHAPE, TAR_SHAPE)
 
 
 def init_data_single(labels):  # 生成单一数据
@@ -213,7 +125,7 @@ def test(model):
         for xi in range(TAR_SHAPE[1]):  # 遍历列
             for bi in range(BOX_COUNT):  # 遍历Box
                 if y_hat[yi, xi, bi*5+4] >= .05:  # 负责预测的box
-                    print(y_hat[yi, xi])
+                    # print(y_hat[yi, xi])
                     x = xi+y_hat[yi, xi, bi*5+0]-y_hat[yi, xi, bi*5+2]/2
                     # 计算中心相对x坐标
                     y = yi+y_hat[yi, xi, bi*5+1]-y_hat[yi, xi, bi*5+3]/2
@@ -229,8 +141,9 @@ def test(model):
                         )
                     )
     image_, title = show(image, labels)
-    image_.save('./export/imgs/%d_%s.png' %
-                (int(time.time()*1e7), title), 'png')
+    image_.save(
+        '%s/%d_%s.png' % (EXPORT_PATH, int(time.time()*1e7), title), 'png'
+    )
     # print(labels)
     # plt.imshow(image_)
     # plt.title(title)
@@ -242,7 +155,8 @@ def yolo_loss(y, y_hat):
     tmp = y-y_hat
     zeros = tf.zeros_like(y_hat, dtype=tf.float32)
     loss = tf.where(tf.math.is_nan(y), x=zeros, y=tmp)
-    return -tf.math.reduce_mean(loss)
+    print(loss)
+    return tf.math.reduce_sum(loss)
 
 
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
@@ -266,34 +180,49 @@ def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
     #     f.write('%s\n\n@\n\n' % y_hat)
     # 计算正确率，不算也行，但是早停需要用所以就进行计算
     accuracy = tf.math.reduce_mean((y_hat*y)+((1-y_hat)*(1-y)))
-    test(self)
     return {'loss': loss, 'accuracy': accuracy}
 
 
-for root, dirs, files in os.walk('./imgs', topdown=False):
+class Callback_(Callback):  # 定义回调类
+    def __init__(self, model, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model = model
+
+    def on_epoch_end(self, epoch, logs={}):  # self就是Model对象的指针
+        test(self.model)
+
+
+for root, dirs, files in os.walk(EXPORT_PATH, topdown=False):
     for name in files:
         os.remove(os.path.join(root, name))
     for name in dirs:
         os.rmdir(os.path.join(root, name))
-if not os.path.exists('./imgs'):
-    os.mkdir('./imgs')
+if not os.path.exists(EXPORT_PATH):
+    os.mkdir(EXPORT_PATH)
 
 model = net.network(NETWORK)
 
 model.compile(
-    optimizer=opts.Adam(learning_rate=0.0001),
+    optimizer=opts.Adam(learning_rate=0.0002),
     loss=tf.keras.losses.MeanSquaredError(),
-    metrics=['accuracy']
+    metrics=['accuracy'],
 )
+# model.compile(
+#     optimizer=opts.Adam(learning_rate=0.0001),
+#     loss=yolo_loss,
+#     metrics=['accuracy'],
+# )
 X, Y = init_data(1000)
 model.train_step = functools.partial(
     step, model
 )  # partial负责把model赋给step的self参数
 model.summary()
+test(model)
 model.fit(
     tf.convert_to_tensor(X, dtype='float32'),
     tf.convert_to_tensor(Y, dtype='float32'),
-    epochs=10
+    epochs=100,
+    callbacks=[Callback_(model)]
 )
 
 # a, b = init_data(1)
