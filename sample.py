@@ -1,16 +1,16 @@
 #!~/.conda/envs python
 # -*- coding: utf-8 -*-
+'''
+只有一个候选框的情况。
+'''
+
 from core.yolo_structure import yolo_network
 from core.utils.captchagenerator import create, show
 import tensorflow as tf
 import functools  # 来源Python标准库的包，用于处理函数和可调用对象的工具
-import tensorflow.keras as keras
-import tensorflow.keras.layers as layers
-import tensorflow.keras.losses as losses
 import tensorflow.keras.optimizers as opts
 import core.utils.network as net
 import numpy as np
-import PIL.Image as Image
 from tensorflow.python.keras.engine import data_adapter
 import time
 from tensorflow.python.keras.callbacks import Callback  # 每轮拟合都调用一次的回调函数类的基类
@@ -18,12 +18,9 @@ import os
 tf.config.experimental_run_functions_eagerly(True)
 np.set_printoptions(suppress=True, threshold=np.inf)  # 设置不用科学计数法
 
-BOXES = [3/2, 1, 2/3]
-BOXES.sort()
-BOX_COUNT = len(BOXES)
 CLASS_COUNT = 10
 IMG_SHAPE = (56, 112, 1)
-TAR_SHAPE = (4, 8, BOX_COUNT*5+CLASS_COUNT)
+TAR_SHAPE = (4, 8, 5+CLASS_COUNT)
 EXPORT_PATH = './export/imgs'
 NETWORK = yolo_network(IMG_SHAPE, TAR_SHAPE)
 NETWORK_SAVE_PATH = './export/model/yolo'
@@ -35,8 +32,8 @@ def init_data_single(labels):  # 生成单一数据
     labels_ = []
     for label in labels:  # 遍历所有物体
         x, y, w, h, class_ = label  # 解包label元组，x、y、w、h全部以像素为单位
-        y_index = int((y+h/2)/cell_h)  # Cell列标
-        x_index = int((x+w/2)/cell_w)  # Cell行标
+        y_index = min(TAR_SHAPE[0]-1, int((y+h/2)/cell_h))  # Cell列标
+        x_index = min(TAR_SHAPE[1]-1, int((x+w/2)/cell_w))  # Cell行标
 
         # y坐标加上一半高度算出中心y坐标，减去上面Cell总高度，算出距离当前Cell上边多少像素，除以Cell高度得到中心距离当前Cell上边百分之多少
         y = (y+h/2-cell_h*y_index)/cell_h
@@ -46,30 +43,25 @@ def init_data_single(labels):  # 生成单一数据
 
         w, h = w/IMG_SHAPE[1], h/IMG_SHAPE[0]  # 求相对于图像的宽度和高度
 
-        for bi in range(len(BOXES)):
-            if w/h <= BOXES[bi]:
-                box_index = bi
-                break
-        labels_.append((x_index, y_index, box_index, x, y, w, h, class_))  # 打包
+        labels_.append((x_index, y_index, x, y, w, h, class_))  # 打包
     # 真实值，但是这里面包含的很多没用的nan,这些nan单纯用来占位，什么都不做
     targets = np.full(TAR_SHAPE, np.nan, dtype=float)
 
     for yi_ in range(TAR_SHAPE[0]):  # 遍历行
         for xi_ in range(TAR_SHAPE[1]):  # 遍历列
-            for bi_ in range(BOX_COUNT):  # 遍历Box
-                targets[yi_, xi_, bi_*5+4] = 0  # 绝大多数box置信度都是0
+            targets[yi_, xi_, 4] = 0  # 绝大多数box置信度都是0
     for label in labels_:  # 遍历所有物体
-        xi, yi, bi, x, y, w, h, class_ = label  # 解包label元组，全部相对位置相对尺寸
+        xi, yi,  x, y, w, h, class_ = label  # 解包label元组，全部相对位置相对尺寸
         vals = (x, y, w, h, 1.)  # 打包省代码，其中1.为置信度
         # 设置box尺寸真实值
         for i in range(5):  # 遍历x,y,w,h,c五个值
-            targets[yi, xi, bi*5+i] = vals[i]  # 设置每一个真实值
+            targets[yi, xi, i] = vals[i]  # 设置每一个真实值
         # 设置类别
         for ci in range(CLASS_COUNT):  # 遍历类别
             if ci == class_:  # 是物体真实类别
-                targets[yi, xi, BOX_COUNT*5+ci] = 1.  # 正确类别的真实值是1
+                targets[yi, xi, 5+ci] = 1.  # 正确类别的真实值是1
             else:  # 不是物体真实类别
-                targets[yi, xi, BOX_COUNT*5+ci] = 0.  # 错误类别应该是0
+                targets[yi, xi, 5+ci] = 0.  # 错误类别应该是0
     # print(labels_)
     return targets  # , mask
 
@@ -77,7 +69,7 @@ def init_data_single(labels):  # 生成单一数据
 def init_data(size: int):
     imgs, targets = [], []
     for _ in range(size):
-        img, labels = create()  # 创建验证码，img没有颜色深度，labels见下文
+        img, labels = create(noise=False)  # 创建验证码，img没有颜色深度，labels见下文
         target = init_data_single(labels)
         imgs.append(img)
         targets.append(target)
@@ -87,7 +79,7 @@ def init_data(size: int):
 def test(model):
     cell_h = IMG_SHAPE[0] / TAR_SHAPE[0]  # Cell的高度
     cell_w = IMG_SHAPE[1] / TAR_SHAPE[1]  # Cell的宽度
-    image, ls = create()  # 创建验证码，img没有颜色深度，labels见下文
+    image, ls = create(noise=False)  # 创建验证码，img没有颜色深度，labels见下文
     ls = ['%d' % e[-1] for e in ls]
     img = np.reshape(image, IMG_SHAPE)
     y_hat = model(tf.convert_to_tensor([img]), training=False)
@@ -95,23 +87,22 @@ def test(model):
     labels = []
     for xi in range(TAR_SHAPE[1]):  # 遍历列
         for yi in range(TAR_SHAPE[0]):  # 遍历行
-            for bi in range(BOX_COUNT):  # 遍历Box
-                if y_hat[yi, xi, bi*5+4] >= .5:  # 负责预测的box
-                    # print(y_hat[yi, xi])
-                    x = (xi+y_hat[yi, xi, bi*5+0])*cell_w  # 计算中心相对x坐标
-                    x = x-y_hat[yi, xi, bi*5+2]/2*IMG_SHAPE[1]
+            if y_hat[yi, xi, 4] >= .5:  # 负责预测的box
+                # print(y_hat[yi, xi])
+                x = (xi+y_hat[yi, xi, 0])*cell_w  # 计算中心相对x坐标
+                x = x-y_hat[yi, xi, 2]/2*IMG_SHAPE[1]
 
-                    y = (yi+y_hat[yi, xi, bi*5+1])*cell_h  # 计算中心相对y坐标
-                    y = y-y_hat[yi, xi, bi*5+3]/2*IMG_SHAPE[0]
+                y = (yi+y_hat[yi, xi, 1])*cell_h  # 计算中心相对y坐标
+                y = y-y_hat[yi, xi, 3]/2*IMG_SHAPE[0]
 
-                    labels.append(
-                        (
-                            x, y,
-                            y_hat[yi, xi, bi*5+2]*IMG_SHAPE[1],  # w
-                            y_hat[yi, xi, bi*5+3]*IMG_SHAPE[0],  # h
-                            np.argmax(y_hat[yi, xi, -CLASS_COUNT:])  # class
-                        )
+                labels.append(
+                    (
+                        x, y,
+                        y_hat[yi, xi, 2]*IMG_SHAPE[1],  # w
+                        y_hat[yi, xi, 3]*IMG_SHAPE[0],  # h
+                        np.argmax(y_hat[yi, xi, -CLASS_COUNT:])  # class
                     )
+                )
     image_, title = show(image, labels)
     image_.save(
         '%s/%d_%s_%s.png' % (
@@ -167,14 +158,13 @@ if not os.path.exists(EXPORT_PATH):
 model = net.network(NETWORK)
 
 model.compile(
-    optimizer=opts.Adam(learning_rate=0.0005),
+    optimizer=opts.Adam(learning_rate=0.0001),
     loss=tf.keras.losses.MeanSquaredError(),
 )
-X, Y = init_data(1000)
+X, Y = init_data(500)
 model.train_step = functools.partial(
     step, model
 )  # partial负责把model赋给step的self参数
-# model.summary()
 test(model)
 model.fit(
     tf.convert_to_tensor(X, dtype='float32'),

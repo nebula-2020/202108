@@ -1,8 +1,10 @@
 #!~/.conda/envs python
 # -*- coding: utf-8 -*-
+from functools import reduce
 import tensorflow as tf
 import tensorflow.keras.layers as layers
 import core.utils.network as net
+from operator import mul
 
 
 def yolo_network(IMG_SHAPE: tuple, TAR_SHAPE: tuple) -> list:
@@ -93,6 +95,6 @@ def yolo_network(IMG_SHAPE: tuple, TAR_SHAPE: tuple) -> list:
             activation=tf.nn.relu, name='Conv-5-2'
         ),
         layers.Flatten(),
-        layers.Dense(units=800, activation='tanh'),
+        layers.Dense(units=reduce(mul, TAR_SHAPE), activation='softmax'),
         layers.Reshape(target_shape=TAR_SHAPE),
     ]
