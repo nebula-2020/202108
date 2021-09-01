@@ -4,7 +4,7 @@
 只有一个候选框的情况。
 '''
 
-from core.yolo_structure import yolo_network
+from core.yolo_structure import *
 from core.utils.captchagenerator import create, show
 import tensorflow as tf
 import functools  # 来源Python标准库的包，用于处理函数和可调用对象的工具
@@ -21,9 +21,9 @@ np.set_printoptions(suppress=True, threshold=np.inf)  # 设置不用科学计数
 CLASS_COUNT = 10
 IMG_SHAPE = (56, 112, 1)
 TAR_SHAPE = (4, 8, 5+CLASS_COUNT)
-EXPORT_PATH = './export/imgs'
+EXPORT_PATH_IMG = './export/imgs'
+EXPORT_PATH_TXT = './export/txts'
 NETWORK = yolo_network(IMG_SHAPE, TAR_SHAPE)
-NETWORK_SAVE_PATH = './export/model/yolo'
 
 
 def init_data_single(labels):  # 生成单一数据
@@ -76,7 +76,7 @@ def init_data(size: int):
     return np.array(imgs), np.array(targets)
 
 
-def test(model):
+def test(model: tf.keras.Model):
     cell_h = IMG_SHAPE[0] / TAR_SHAPE[0]  # Cell的高度
     cell_w = IMG_SHAPE[1] / TAR_SHAPE[1]  # Cell的宽度
     image, ls = create(noise=False)  # 创建验证码，img没有颜色深度，labels见下文
@@ -104,23 +104,32 @@ def test(model):
                     )
                 )
     image_, title = show(image, labels)
+    name = int(time.time()*1e7)
+    with open('%s/%d.txt' % (EXPORT_PATH_TXT, name), 'w') as f:
+        f.write(str(y_hat))
     image_.save(
         '%s/%d_%s_%s.png' % (
-            EXPORT_PATH,
-            int(time.time()*1e7),
+            EXPORT_PATH_IMG,
+            name,
             title,
             ''.join(ls)
         ), 'png'
     )
 
-# @tf.function  # 这个注解控制将方法加入内存以提高运行速度
 
-
-def yolo_loss(y, y_hat):
-    tmp = y-y_hat
-    zeros = tf.zeros_like(y_hat, dtype=tf.float32)
-    loss = tf.where(tf.math.is_nan(y), x=zeros, y=tmp)
-    return tf.math.reduce_sum(loss)
+def yolo_loss(y_p, y_hat):
+    loss = tf.zeros_like(y_hat, dtype=tf.float32)
+    for y in range(TAR_SHAPE[0]):
+        for x in range(TAR_SHAPE[1]):
+            if y_p[y, x, 4] != 1:
+                loss[y, x, 4] = (y_p[y, x, 4]-y_hat[y, x, 4])**2
+                continue
+            for i in range(TAR_SHAPE[2]):
+                if i == 3 or i == 4:
+                    loss[y, x, 2] = (y_p[y, x, i]**.5-y_hat[y, x, i]**.5)**2
+                else:
+                    loss[y, x, i] = (y_p[y, x, i]-y_hat[y, x, i])**2
+    return -tf.math.reduce_mean(loss)
 
 
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
@@ -147,14 +156,19 @@ class Callback_(Callback):  # 定义回调类
         test(self.model)
 
 
-for root, dirs, files in os.walk(EXPORT_PATH, topdown=False):
-    for name in files:
-        os.remove(os.path.join(root, name))
-    for name in dirs:
-        os.rmdir(os.path.join(root, name))
-if not os.path.exists(EXPORT_PATH):
-    os.mkdir(EXPORT_PATH)
-# model = keras.models.load_model(NETWORK_SAVE_PATH)
+def recreate_exportdirs(path):
+    for root, dirs, files in os.walk(path, topdown=False):
+        for name in files:
+            os.remove(os.path.join(root, name))
+        for name in dirs:
+            os.rmdir(os.path.join(root, name))
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+
+recreate_exportdirs(EXPORT_PATH_IMG)
+recreate_exportdirs(EXPORT_PATH_TXT)
+
 model = net.network(NETWORK)
 
 model.compile(
@@ -172,4 +186,3 @@ model.fit(
     epochs=100,
     callbacks=[Callback_(model)]
 )
-model.save(NETWORK_SAVE_PATH)

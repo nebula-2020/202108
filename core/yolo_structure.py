@@ -98,3 +98,35 @@ def yolo_network(IMG_SHAPE: tuple, TAR_SHAPE: tuple) -> list:
         layers.Dense(units=reduce(mul, TAR_SHAPE), activation='softmax'),
         layers.Reshape(target_shape=TAR_SHAPE),
     ]
+
+
+def yolo_alex_network(IMG_SHAPE: tuple, TAR_SHAPE: tuple) -> list:
+    return [
+        layers.Input(shape=IMG_SHAPE, name="input"),
+        layers.Conv2D(
+            filters=96, kernel_size=(5, 5), padding='same',
+            activation='relu', name='Conv-1'
+        ),
+        layers.MaxPool2D(),
+        layers.Conv2D(
+            filters=256, kernel_size=(3, 3), padding='same',
+            activation='relu', name='Conv-2'
+        ),
+        layers.MaxPool2D(),
+        layers.Conv2D(
+            filters=384, kernel_size=(3, 3), padding='same',
+            activation=tf.nn.relu, name='Conv-3'
+        ),
+        layers.Conv2D(
+            filters=384, kernel_size=(3, 3), padding='same',
+            activation=tf.nn.relu, name='Conv-4'
+        ),
+        layers.Conv2D(
+            filters=384, kernel_size=(3, 3), padding='same',
+            activation=tf.nn.relu, name='Conv-5'
+        ),
+        layers.MaxPool2D(),
+        layers.Flatten(),
+        layers.Dense(units=reduce(mul, TAR_SHAPE), activation='softmax'),
+        layers.Reshape(target_shape=TAR_SHAPE),
+    ]
