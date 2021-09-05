@@ -41,7 +41,7 @@ def init_data_single(labels):  # 生成单一数据
         # x坐标加上一半宽度算出中心x坐标，减去左面Cell总宽度，算出距离当前Cell左边多少像素，除以Cell宽度得到中心距离当前Cell左边百分之多少
         x = (x+w/2-cell_w*x_index)/cell_w
 
-        w, h = w/IMG_SHAPE[1], h/IMG_SHAPE[0]  # 求相对于图像的宽度和高度
+        w, h = w/cell_w, h/cell_h  # 求相对于图像的宽度和高度
 
         labels_.append((x_index, y_index, x, y, w, h, class_))  # 打包
     # 真实值，但是这里面包含的很多没用的nan,这些nan单纯用来占位，什么都不做
@@ -63,7 +63,7 @@ def init_data_single(labels):  # 生成单一数据
             else:  # 不是物体真实类别
                 targets[yi, xi, 5+ci] = 0.  # 错误类别应该是0
     # print(labels_)
-    return targets  # , mask
+    return targets
 
 
 def init_data(size: int):
@@ -87,13 +87,13 @@ def test(model: tf.keras.Model):
     labels = []
     for xi in range(TAR_SHAPE[1]):  # 遍历列
         for yi in range(TAR_SHAPE[0]):  # 遍历行
-            if y_hat[yi, xi, 4] >= .5:  # 负责预测的box
+            if y_hat[yi, xi, 4] >= .05:  # 负责预测的box
                 # print(y_hat[yi, xi])
                 x = (xi+y_hat[yi, xi, 0])*cell_w  # 计算中心相对x坐标
-                x = x-y_hat[yi, xi, 2]/2*IMG_SHAPE[1]
+                x = x-y_hat[yi, xi, 2]/2*cell_w
 
                 y = (yi+y_hat[yi, xi, 1])*cell_h  # 计算中心相对y坐标
-                y = y-y_hat[yi, xi, 3]/2*IMG_SHAPE[0]
+                y = y-y_hat[yi, xi, 3]/2*cell_h
 
                 labels.append(
                     (
@@ -118,18 +118,20 @@ def test(model: tf.keras.Model):
 
 
 def yolo_loss(y_p, y_hat):
-    loss = tf.zeros_like(y_hat, dtype=tf.float32)
+    loss = 0
     for y in range(TAR_SHAPE[0]):
         for x in range(TAR_SHAPE[1]):
             if y_p[y, x, 4] != 1:
-                loss[y, x, 4] = (y_p[y, x, 4]-y_hat[y, x, 4])**2
+                loss += .5*(y_p[y, x, 4]-y_hat[y, x, 4])**2
                 continue
             for i in range(TAR_SHAPE[2]):
-                if i == 3 or i == 4:
-                    loss[y, x, 2] = (y_p[y, x, i]**.5-y_hat[y, x, i]**.5)**2
+                if i == 0 or i == 1:
+                    loss += 5.*(y_p[y, x, i]-y_hat[y, x, i])**2
+                elif i == 2 or i == 3:
+                    loss += 5.*(y_p[y, x, i]**.5-y_hat[y, x, i]**.5)**2
                 else:
-                    loss[y, x, i] = (y_p[y, x, i]-y_hat[y, x, i])**2
-    return -tf.math.reduce_mean(loss)
+                    loss += (y_p[y, x, i]-y_hat[y, x, i])**2
+    return loss
 
 
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
@@ -172,7 +174,7 @@ recreate_exportdirs(EXPORT_PATH_TXT)
 model = net.network(NETWORK)
 
 model.compile(
-    optimizer=opts.Adam(learning_rate=0.0001),
+    optimizer=opts.SGD(momentum=0.9),
     loss=tf.keras.losses.MeanSquaredError(),
 )
 X, Y = init_data(500)

@@ -5,7 +5,7 @@
 """
 from tensorflow.keras import Model
 from tensorflow.keras.layers import (
-    concatenate, Conv2D, MaxPool2D, Input, AvgPool2D, Flatten, Softmax
+    concatenate, Conv2D, MaxPool2D, Input, AvgPool2D, Flatten, Softmax, LayerNormalization
 )
 from tensorflow.python.keras.layers.advanced_activations import ReLU
 
@@ -298,4 +298,23 @@ def Darknet_19() -> list:
         AvgPool2D(pool_size=(7, 7)),
         Flatten(),
         Softmax()
+    ]
+
+
+def alexnet():
+    return[
+        Input(shape=(224, 224, 3), name="input"),
+        Conv2D(filters=96, kernel_size=(11, 11),
+               strides=(4, 4), padding='same'),
+        MaxPool2D(pool_size=(3, 3), strides=2, padding='same'),
+        Conv2D(filters=256, kernel_size=(5, 5),
+               strides=(1, 1), padding='same'),
+        MaxPool2D(pool_size=(3, 3), strides=2, padding='same'),
+        Conv2D(filters=384, kernel_size=(3, 3),
+               strides=(1, 1), padding='same'),
+        Conv2D(filters=384, kernel_size=(3, 3),
+               strides=(1, 1), padding='same'),
+        Conv2D(filters=384, kernel_size=(3, 3),
+               strides=(1, 1), padding='same'),
+        MaxPool2D(),
     ]

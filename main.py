@@ -18,15 +18,18 @@ import os
 tf.config.experimental_run_functions_eagerly(True)
 np.set_printoptions(suppress=True, threshold=np.inf)  # 设置不用科学计数法
 
-BOXES = [3/2, 1, 2/3]
+BOXES = [0.8, 1., 1.25]
 BOXES.sort()
 BOX_COUNT = len(BOXES)
 CLASS_COUNT = 10
 IMG_SHAPE = (56, 112, 1)
 TAR_SHAPE = (4, 8, BOX_COUNT*5+CLASS_COUNT)
-EXPORT_PATH = './export/imgs'
+EXPORT_PATH_IMG = './export/imgs'
+EXPORT_PATH_TXT = './export/txts'
 NETWORK = yolo_network(IMG_SHAPE, TAR_SHAPE)
 NETWORK_SAVE_PATH = './export/model/yolo'
+LAMBDA_COORD = 5.
+LAMBDA_NOOBJ = .5
 
 
 def init_data_single(labels):  # 生成单一数据
@@ -35,8 +38,8 @@ def init_data_single(labels):  # 生成单一数据
     labels_ = []
     for label in labels:  # 遍历所有物体
         x, y, w, h, class_ = label  # 解包label元组，x、y、w、h全部以像素为单位
-        y_index = int((y+h/2)/cell_h)  # Cell列标
-        x_index = int((x+w/2)/cell_w)  # Cell行标
+        y_index = min(TAR_SHAPE[0]-1, int((y+h/2)/cell_h))  # Cell列标
+        x_index = min(TAR_SHAPE[1]-1, int((x+w/2)/cell_w))  # Cell行标
 
         # y坐标加上一半高度算出中心y坐标，减去上面Cell总高度，算出距离当前Cell上边多少像素，除以Cell高度得到中心距离当前Cell上边百分之多少
         y = (y+h/2-cell_h*y_index)/cell_h
@@ -49,6 +52,10 @@ def init_data_single(labels):  # 生成单一数据
         for bi in range(len(BOXES)):
             if w/h <= BOXES[bi]:
                 box_index = bi
+                if BOXES[bi] < 1:
+                    w *= BOXES[bi]
+                else:
+                    h /= BOXES[bi]
                 break
         labels_.append((x_index, y_index, box_index, x, y, w, h, class_))  # 打包
     # 真实值，但是这里面包含的很多没用的nan,这些nan单纯用来占位，什么都不做
@@ -103,20 +110,27 @@ def test(model):
 
                     y = (yi+y_hat[yi, xi, bi*5+1])*cell_h  # 计算中心相对y坐标
                     y = y-y_hat[yi, xi, bi*5+3]/2*IMG_SHAPE[0]
-
+                    w = y_hat[yi, xi, bi*5+2]*IMG_SHAPE[1]
+                    h = y_hat[yi, xi, bi*5+3]*IMG_SHAPE[0]
+                    if w/h <= BOXES[bi]:
+                        if BOXES[bi] < 1:
+                            w /= BOXES[bi]
+                        else:
+                            h *= BOXES[bi]
                     labels.append(
                         (
-                            x, y,
-                            y_hat[yi, xi, bi*5+2]*IMG_SHAPE[1],  # w
-                            y_hat[yi, xi, bi*5+3]*IMG_SHAPE[0],  # h
+                            x, y, w, h,
                             np.argmax(y_hat[yi, xi, -CLASS_COUNT:])  # class
                         )
                     )
     image_, title = show(image, labels)
+    name = int(time.time()*1e7)
+    with open('%s/%d.txt' % (EXPORT_PATH_TXT, name), 'w') as f:
+        f.write(str(y_hat))
     image_.save(
         '%s/%d_%s_%s.png' % (
-            EXPORT_PATH,
-            int(time.time()*1e7),
+            EXPORT_PATH_IMG,
+            name,
             title,
             ''.join(ls)
         ), 'png'
@@ -125,11 +139,24 @@ def test(model):
 # @tf.function  # 这个注解控制将方法加入内存以提高运行速度
 
 
-def yolo_loss(y, y_hat):
-    tmp = y-y_hat
-    zeros = tf.zeros_like(y_hat, dtype=tf.float32)
-    loss = tf.where(tf.math.is_nan(y), x=zeros, y=tmp)
-    return tf.math.reduce_sum(loss)
+def yolo_loss(y_p, y_hat):
+    loss = 0
+    for y in range(TAR_SHAPE[0]):
+        for x in range(TAR_SHAPE[1]):
+            for bi in range(BOX_COUNT):
+                if y_p[y, x, bi, 4] != 1:
+                    loss += LAMBDA_NOOBJ*(y_p[y, x, 4]-y_hat[y, x, 4])**2
+                    continue
+                for i in range(TAR_SHAPE[2]):
+                    if i == 0 or i == 1:
+                        loss += LAMBDA_COORD*(y_p[y, x, i]-y_hat[y, x, i])**2
+                    elif i == 2 or i == 3:
+                        loss += LAMBDA_COORD*(
+                            y_p[y, x, i]**.5 - y_hat[y, x, i]**.5
+                        )**2
+                    else:
+                        loss += (y_p[y, x, i]-y_hat[y, x, i])**2
+    return loss
 
 
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
@@ -156,21 +183,26 @@ class Callback_(Callback):  # 定义回调类
         test(self.model)
 
 
-for root, dirs, files in os.walk(EXPORT_PATH, topdown=False):
-    for name in files:
-        os.remove(os.path.join(root, name))
-    for name in dirs:
-        os.rmdir(os.path.join(root, name))
-if not os.path.exists(EXPORT_PATH):
-    os.mkdir(EXPORT_PATH)
+def recreate_exportdirs(path):
+    for root, dirs, files in os.walk(path, topdown=False):
+        for name in files:
+            os.remove(os.path.join(root, name))
+        for name in dirs:
+            os.rmdir(os.path.join(root, name))
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+
+recreate_exportdirs(EXPORT_PATH_IMG)
+recreate_exportdirs(EXPORT_PATH_TXT)
 # model = keras.models.load_model(NETWORK_SAVE_PATH)
 model = net.network(NETWORK)
 
 model.compile(
-    optimizer=opts.Adam(learning_rate=0.0005),
+    optimizer=opts.Adam(learning_rate=0.0002),
     loss=tf.keras.losses.MeanSquaredError(),
 )
-X, Y = init_data(1000)
+X, Y = init_data(5000)
 model.train_step = functools.partial(
     step, model
 )  # partial负责把model赋给step的self参数
@@ -179,7 +211,7 @@ test(model)
 model.fit(
     tf.convert_to_tensor(X, dtype='float32'),
     tf.convert_to_tensor(Y, dtype='float32'),
-    epochs=100,
+    epochs=500,
     callbacks=[Callback_(model)]
 )
 model.save(NETWORK_SAVE_PATH)

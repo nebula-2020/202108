@@ -52,7 +52,6 @@ def create(
         word_count = random.randint(0, 6)
     if noise and random.randint(0, 2) == 0:
         img = np.uint8(np.uint8((np.random.randn(*size)+2)*255)*0.75)  # 新建噪声
-        print('noize')
     else:
         img = np.zeros(size, dtype='uint8')
     img = Image.fromarray(img)  # 对象类型转换
