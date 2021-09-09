@@ -64,13 +64,14 @@ def init_data_single(labels):  # 生成单一数据
     for yi_ in range(TAR_SHAPE[0]):  # 遍历行
         for xi_ in range(TAR_SHAPE[1]):  # 遍历列
             for bi_ in range(BOX_COUNT):  # 遍历Box
-                targets[yi_, xi_, bi_*5+4] = 0  # 绝大多数box置信度都是0
+                targets[yi_, xi_, bi_] = 0  # 绝大多数box置信度都是0
     for label in labels_:  # 遍历所有物体
         xi, yi, bi, x, y, w, h, class_ = label  # 解包label元组，全部相对位置相对尺寸
-        vals = (x, y, w, h, 1.)  # 打包省代码，其中1.为置信度
+        vals = (x, y, w, h)  # 打包省代码
+        targets[yi, xi, bi] = 1.  # 设置置信度
         # 设置box尺寸真实值
-        for i in range(5):  # 遍历x,y,w,h,c五个值
-            targets[yi, xi, bi*5+i] = vals[i]  # 设置每一个真实值
+        for i in range(4):  # 遍历x,y,w,h五个值
+            targets[yi, xi, BOX_COUNT + bi*4+i] = vals[i]  # 设置每一个真实值
         # 设置类别
         for ci in range(CLASS_COUNT):  # 遍历类别
             if ci == class_:  # 是物体真实类别
@@ -78,7 +79,7 @@ def init_data_single(labels):  # 生成单一数据
             else:  # 不是物体真实类别
                 targets[yi, xi, BOX_COUNT*5+ci] = 0.  # 错误类别应该是0
     # print(labels_)
-    return targets  # , mask
+    return targets
 
 
 def init_data(size: int):
@@ -103,15 +104,18 @@ def test(model):
     for xi in range(TAR_SHAPE[1]):  # 遍历列
         for yi in range(TAR_SHAPE[0]):  # 遍历行
             for bi in range(BOX_COUNT):  # 遍历Box
-                if y_hat[yi, xi, bi*5+4] >= .5:  # 负责预测的box
-                    # print(y_hat[yi, xi])
-                    x = (xi+y_hat[yi, xi, bi*5+0])*cell_w  # 计算中心相对x坐标
-                    x = x-y_hat[yi, xi, bi*5+2]/2*IMG_SHAPE[1]
+                if y_hat[yi, xi, bi] >= .5:  # 负责预测的box
+                    # # 计算中心相对x坐标
+                    x = (xi+y_hat[yi, xi, BOX_COUNT + bi*4+0])*cell_w
+                    x = x-y_hat[yi, xi, BOX_COUNT + bi*4+2]/2*IMG_SHAPE[1]
 
-                    y = (yi+y_hat[yi, xi, bi*5+1])*cell_h  # 计算中心相对y坐标
-                    y = y-y_hat[yi, xi, bi*5+3]/2*IMG_SHAPE[0]
-                    w = y_hat[yi, xi, bi*5+2]*IMG_SHAPE[1]
-                    h = y_hat[yi, xi, bi*5+3]*IMG_SHAPE[0]
+                    # 计算中心相对y坐标
+                    y = (yi+y_hat[yi, xi, BOX_COUNT + bi*4+1])*cell_h
+                    y = y-y_hat[yi, xi, BOX_COUNT + bi*4+3]/2*IMG_SHAPE[0]
+
+                    # 计算宽、高
+                    w = y_hat[yi, xi, BOX_COUNT + bi*4+2]*IMG_SHAPE[1]
+                    h = y_hat[yi, xi, BOX_COUNT + bi*4+3]*IMG_SHAPE[0]
                     if w/h <= BOXES[bi]:
                         if BOXES[bi] < 1:
                             w /= BOXES[bi]
@@ -136,29 +140,8 @@ def test(model):
         ), 'png'
     )
 
-# @tf.function  # 这个注解控制将方法加入内存以提高运行速度
 
-
-def yolo_loss(y_p, y_hat):
-    loss = 0
-    for y in range(TAR_SHAPE[0]):
-        for x in range(TAR_SHAPE[1]):
-            for bi in range(BOX_COUNT):
-                if y_p[y, x, bi, 4] != 1:
-                    loss += LAMBDA_NOOBJ*(y_p[y, x, 4]-y_hat[y, x, 4])**2
-                    continue
-                for i in range(TAR_SHAPE[2]):
-                    if i == 0 or i == 1:
-                        loss += LAMBDA_COORD*(y_p[y, x, i]-y_hat[y, x, i])**2
-                    elif i == 2 or i == 3:
-                        loss += LAMBDA_COORD*(
-                            y_p[y, x, i]**.5 - y_hat[y, x, i]**.5
-                        )**2
-                    else:
-                        loss += (y_p[y, x, i]-y_hat[y, x, i])**2
-    return loss
-
-
+@tf.function  # 这个注解控制将方法加入内存以提高运行速度
 def step(self, data):  # 定义训练步骤方法，模型每轮拟合都进行
     x, y_raw, _ = data_adapter.unpack_x_y_sample_weight(data)  # 把元组拆成单个值
     y_h = self(x, training=False)  # 非训练进行一次计算，得到模型当前参数输出
